@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TT Match Tracker Pro</title>
+    
+    <!-- DuckDB WASM -->
+    <script src="https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.28.0/dist/duckdb-browser-eh.worker.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.28.0/dist/duckdb-browser-eh.js"></script>
+    
+    <style>
+        :root {
+            --primary: #1e40af;
+            --secondary: #3b82f6;
+            --accent: #f97316;
+            --bg: #f8fafc;
+            --card: #ffffff;
+            --text: #1e293b;
+            --text-light: #64748b;
+            --border: #e2e8f0;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --purple: #8b5cf6;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            overflow: hidden;
+            touch-action: manipulation;
+        }
+
+        .container {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            padding: 0.5rem;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            padding: 0.75rem;
+            border-radius: 12px;
+            margin-bottom: 0.5rem;
+            text-align: center;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+        }
+
+        .header h1 {
+            font-size: 1.1rem;
+            font-weight: 800;
+            margin: 0;
+            flex: 1;
+        }
+
+        .db-status {
+            font-size: 0.65rem;
+            background: rgba(255,255,255,0.2);
+            padding: 0.2rem 0.5rem;
+            border-radius: 20px;
+            position: absolute;
+            right: 0.75rem;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        .nav {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .nav-btn {
+            flex: 1;
+            padding: 0.6rem;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text-light);
+            font-weight: 700;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: all 0.2s;
+        }
+
+        .nav-btn.active {
+            background: var(--secondary);
+            color: white;
+            border-color: var(--secondary);
+        }
+
+        .screen {
+            display: none;
+            flex-direction: column;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .screen.active {
+            display: flex;
+        }
+
+        .scrollable {
+            overflow-y: auto;
+            padding-bottom: 2rem;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        /* Score Board */
+        .score-board {
+            background: var(--card);
+            border-radius: 20px;
+            padding: 1.25rem 1rem;
+            margin-bottom: 0.5rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            border: 2px solid var(--border);
+            position: relative;
+        }
+
+        .score-grid {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .player-box {
+            text-align: center;
+            padding: 0.5rem;
+            border-radius: 16px;
+            border: 3px solid transparent;
+            transition: all 0.3s;
+            position: relative;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .player-box.serving {
+            border-color: var(--accent);
+            background: linear-gradient(135deg, rgba(249,115,22,0.1), rgba(249,115,22,0.05));
+            box-shadow: 0 0 20px rgba(249,115,22,0.2);
+        }
+
+        .player-box.selectable {
+            border: 3px dashed var(--secondary);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .select-hint {
+            position: absolute;
+            top: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--accent);
+            color: white;
+            font-size: 0.65rem;
+            font-weight: 800;
+            padding: 0.2rem 0.6rem;
+            border-radius: 10px;
+            white-space: nowrap;
+            z-index: 10;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+
+        .player-name {
+            font-size: 1rem;
+            font-weight: 800;
+            color: var(--text);
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            padding: 0 0.25rem;
+        }
+
+        .score-number {
+            font-size: 3.5rem;
+            font-weight: 900;
+            color: var(--primary);
+            line-height: 1;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .sets-row {
+            display: flex;
+            justify-content: center;
+            gap: 0.4rem;
+            margin-top: 0.5rem;
+        }
+
+        .set-pill {
+            width: 24px;
+            height: 6px;
+            border-radius: 3px;
+            background: var(--border);
+            transition: all 0.3s;
+        }
+
+        .set-pill.won {
+            background: var(--success);
+            box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+        }
+
+        .vs-divider {
+            font-size: 0.8rem;
+            font-weight: 900;
+            color: var(--text-light);
+            background: var(--bg);
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid var(--border);
+        }
+
+        .match-info {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 2px solid var(--border);
+            font-size: 0.8rem;
+            color: var(--text-light);
+            font-weight: 700;
+        }
+
+        /* Buttons */
+        .action-bar {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .action-btn {
+            flex: 1;
+            padding: 0.75rem;
+            background: var(--card);
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            color: var(--text);
+            font-weight: 700;
+            cursor: pointer;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.3rem;
+            transition: all 0.2s;
+        }
+
+        .action-btn:active {
+            transform: scale(0.98);
+        }
+
+        .action-btn.danger {
+            border-color: var(--error);
+            color: var(--error);
+        }
+
+        .action-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .section-title {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: var(--text-light);
+            margin-bottom: 0.4rem;
+            font-weight: 800;
+            letter-spacing: 0.05em;
+        }
+
+        .btn-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .point-btn {
+            padding: 0.8rem 0.25rem;
+            background: white;
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            color: var(--text);
+            font-weight: 700;
+            cursor: pointer;
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.3rem;
+            transition: all 0.1s;
+            line-height: 1.2;
+            min-height: 60px;
+        }
+
+        .point-btn:active {
+            transform: scale(0.96);
+        }
+
+        .point-btn .icon {
+            font-size: 1.3rem;
+        }
+
+        .point-btn.good { border-color: var(--success); color: var(--success); background: rgba(16,185,129,0.03); }
+        .point-btn.service { border-color: var(--secondary); color: var(--secondary); background: rgba(59,130,246,0.03); }
+        .point-btn.luck { border-color: var(--warning); color: var(--warning); background: rgba(245,158,11,0.03); }
+        .point-btn.error { border-color: var(--error); color: var(--error); background: rgba(239,68,68,0.03); }
+
+        /* Forms */
+        .card {
+            background: var(--card);
+            border-radius: 16px;
+            padding: 1.25rem;
+            margin-bottom: 0.75rem;
+            border: 1px solid var(--border);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        }
+
+        .input-row {
+            margin-bottom: 1rem;
+        }
+
+        .input-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .input-row label {
+            display: block;
+            font-size: 0.8rem;
+            color: var(--text-light);
+            margin-bottom: 0.3rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .input-row input {
+            width: 100%;
+            padding: 0.875rem;
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            font-family: inherit;
+        }
+
+        .input-row input:focus {
+            outline: none;
+            border-color: var(--secondary);
+        }
+
+        .primary-btn {
+            width: 100%;
+            padding: 1rem;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            border: none;
+            border-radius: 14px;
+            font-weight: 800;
+            font-size: 1rem;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+            box-shadow: 0 4px 12px rgba(30, 64, 175, 0.25);
+        }
+
+        .primary-btn:active {
+            transform: translateY(2px);
+        }
+
+        /* DB Section */
+        .db-section {
+            background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
+            border: 2px solid #bae6fd;
+            border-radius: 16px;
+            padding: 1rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .db-title {
+            font-size: 0.9rem;
+            font-weight: 800;
+            color: var(--primary);
+            margin-bottom: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .db-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+        }
+
+        .db-btn {
+            padding: 0.75rem 0.5rem;
+            background: white;
+            border: 2px solid var(--secondary);
+            border-radius: 10px;
+            color: var(--secondary);
+            font-weight: 700;
+            font-size: 0.75rem;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.2s;
+        }
+
+        .db-btn:active {
+            background: var(--secondary);
+            color: white;
+        }
+
+        .db-btn.danger {
+            border-color: var(--error);
+            color: var(--error);
+        }
+
+        .db-btn.danger:active {
+            background: var(--error);
+            color: white;
+        }
+
+        /* Stats */
+        .stat-card {
+            background: var(--card);
+            padding: 1rem;
+            border-radius: 16px;
+            margin-bottom: 0.5rem;
+            border: 1px solid var(--border);
+        }
+
+        .stat-title {
+            font-size: 0.95rem;
+            font-weight: 800;
+            margin-bottom: 0.75rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.5rem;
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 0.75rem 0.2rem;
+            background: var(--bg);
+            border-radius: 10px;
+        }
+
+        .stat-num {
+            font-size: 1.5rem;
+            font-weight: 900;
+            display: block;
+            margin-bottom: 0.2rem;
+        }
+
+        .stat-label {
+            font-size: 0.65rem;
+            color: var(--text-light);
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+
+        .timeline {
+            max-height: 150px;
+            overflow-y: auto;
+            background: var(--bg);
+            border-radius: 10px;
+            padding: 0.5rem;
+            margin-top: 0.5rem;
+            font-size: 0.8rem;
+        }
+
+        .timeline-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.4rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .timeline-item:last-child {
+            border-bottom: none;
+        }
+
+        .timeline-time {
+            color: var(--text-light);
+            font-size: 0.75rem;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.6);
+            backdrop-filter: blur(4px);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-box {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 20px;
+            width: 100%;
+            max-width: 320px;
+            text-align: center;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+        }
+
+        .modal-title {
+            font-size: 1.25rem;
+            font-weight: 800;
+            margin-bottom: 0.5rem;
+        }
+
+        .modal-text {
+            color: var(--text-light);
+            font-size: 0.9rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .modal-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+        }
+
+        .modal-btn {
+            padding: 0.875rem;
+            border-radius: 12px;
+            border: none;
+            font-weight: 800;
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
+
+        .modal-btn.secondary {
+            background: var(--bg);
+            color: var(--text);
+        }
+
+        .modal-btn.primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .modal-btn.danger {
+            background: var(--error);
+            color: white;
+        }
+
+        /* Helper Text */
+        .help-text {
+            font-size: 0.8rem;
+            color: var(--text-light);
+            text-align: center;
+            margin-top: 0.5rem;
+            padding: 0.5rem;
+            background: var(--bg);
+            border-radius: 8px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-light);
+        }
+
+        @media (max-width: 380px) {
+            .score-number { font-size: 3rem; }
+            .point-btn { font-size: 0.75rem; min-height: 55px; }
+            .player-name { font-size: 0.9rem; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>🏓 TT Tracker</h1>
+        <span class="db-status" id="db-status">⏳</span>
+    </div>
+
+    <div class="nav">
+        <button class="nav-btn active" onclick="showTab('setup')" id="nav-setup">Setup</button>
+        <button class="nav-btn" onclick="showTab('match')" id="nav-match">Match</button>
+        <button class="nav-btn" onclick="showTab('stats')" id="nav-stats">Stats</button>
+        <button class="nav-btn" onclick="showTab('data')" id="nav-data">Daten</button>
+    </div>
+
+    <!-- Setup Screen -->
+    <div id="setup" class="screen active scrollable">
+        <div class="card">
+            <div class="input-row">
+                <label>Dein Name</label>
+                <input type="text" id="p1-name" placeholder="Spieler 1" value="Ich">
+            </div>
+            <div class="input-row">
+                <label>Gegner Name</label>
+                <input type="text" id="p2-name" placeholder="Gegner Name" value="Gegner" oninput="updateOpponentShort()">
+            </div>
+            <div class="input-row">
+                <label>Modus</label>
+                <input type="text" value="3 Gewinnsätze" disabled style="opacity: 0.7; background: var(--bg);">
+            </div>
+            <button class="primary-btn" onclick="startMatch()">🚀 Match Starten</button>
+        </div>
+
+        <div class="card" style="background: linear-gradient(135deg, #fef3c7, #fde68a); border-color: #f59e0b;">
+            <div style="font-weight: 800; color: #92400e; margin-bottom: 0.5rem;">💡 Tipp</div>
+            <p style="font-size: 0.85rem; color: #78350f; line-height: 1.5;">
+                Diese App läuft komplett im Browser mit DuckDB. 
+                Alle Daten bleiben lokal auf deinem Gerät. 
+                Exportiere regelmäßig Backups im "Daten"-Tab.
+            </p>
+        </div>
+    </div>
+
+    <!-- Match Screen -->
+    <div id="match" class="screen">
+        <!-- Score -->
+        <div class="score-board">
+            <div class="score-grid">
+                <div class="player-box" id="box-p1" onclick="selectServe(1)">
+                    <div class="player-name" id="display-p1">Ich</div>
+                    <div class="score-number" id="score-p1">0</div>
+                    <div class="sets-row" id="sets-p1">
+                        <div class="set-pill"></div>
+                        <div class="set-pill"></div>
+                        <div class="set-pill"></div>
+                    </div>
+                </div>
+
+                <div class="vs-divider">VS</div>
+
+                <div class="player-box" id="box-p2" onclick="selectServe(2)">
+                    <div class="player-name" id="display-p2">Gegner</div>
+                    <div class="score-number" id="score-p2">0</div>
+                    <div class="sets-row" id="sets-p2">
+                        <div class="set-pill"></div>
+                        <div class="set-pill"></div>
+                        <div class="set-pill"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="match-info">
+                <span>Satz: <b id="set-num">1</b>/3</span>
+                <span id="serve-status" style="color: var(--accent);">Aufschläger wählen ↑</span>
+            </div>
+        </div>
+
+        <!-- Action Bar -->
+        <div class="action-bar">
+            <button class="action-btn" onclick="undoLastPoint()" id="undo-btn" disabled>
+                ↩ Rückgängig
+            </button>
+            <button class="action-btn danger" onclick="endMatch()">
+                💾 Beenden
+            </button>
+        </div>
+
+        <!-- Own Points -->
+        <div>
+            <div class="section-title">Punkt für Dich</di
